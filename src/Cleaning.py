@@ -64,8 +64,8 @@ class Cleaning:
     def prepare_images(self):
         dataset = tf.data.Dataset.from_generator(self.gen_image, 
                                                  output_signature=(
-                                                     tf.TensorSpec(shape=(4032, 3024, 3), dtype=tf.uint8),
-                                                     tf.TensorSpec(shape=(), dtype=tf.uint8)
+                                                     tf.TensorSpec(shape=(4032, 3024, 3), dtype=tf.float32),
+                                                     tf.TensorSpec(shape=(), dtype=tf.float32)
                                                 )
                                             )                          
         self._dataset = dataset
@@ -81,4 +81,4 @@ class Cleaning:
 if __name__ == '__main__':
     obj = Cleaning()
     dataset = obj.dataset
-    print(dataset.take(1))
+    print(next(iter(dataset.take(1))))
