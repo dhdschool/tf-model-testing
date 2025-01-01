@@ -1,11 +1,12 @@
 import os
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '0'
 
-import tensorflow as tf
+from tensorflow.python.client import device_lib
 
 def initialization():
-    gpus = tf.config.list_physical_devices('GPU')
-    assert(len(gpus) > 0)
+    local_device_protos = device_lib.list_local_devices()
+    return [x.name for x in local_device_protos if x.device_type == 'GPU']
+
+import tensorflow as tf
     
 if __name__ == '__main__':
     initialization()

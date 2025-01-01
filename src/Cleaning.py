@@ -6,6 +6,10 @@ import tensorflow as tf
 import numpy as np
 import cv2
 
+from random import sample
+
+from PIL import Image
+
 
 gpus = tf.config.list_physical_devices('GPU')
 if gpus:
@@ -17,18 +21,116 @@ if gpus:
   except RuntimeError as e:
     print(e)
 
+DATASET_PATH = 'annotated-images/image-data'
+IMAGE_PATH = 'annotated-images/preprocessed-images'
+PROCESSED_PATH = 'annotated-images/processed-images'
+CSV_PATH = 'annotated-images/csv-files'
+
 class Cleaning:
-    def __init__(self):        
-        self.img_path_strings = os.listdir('annotated-images/alloted-images')
-        self.img_paths = list(map(lambda x: Path(f'annotated-images/alloted-images/{x}'), self.img_path_strings))
+    def __init__(self, 
+                 image_path=IMAGE_PATH, 
+                 csv_path=CSV_PATH, 
+                 region_path = 'annotated-images/region-count.csv',
+                 dataset_path = DATASET_PATH,
+                 processed_path = PROCESSED_PATH,
+                 img_size = (341, 256)):  
         
-        self.csv_path_strings = os.listdir('annotated-images/csv-files')
-        self.csv_paths = list(map(lambda x: Path(f'annotated-images/csv-files/{x}'), self.csv_path_strings))
-      
-        self.prepare_counting()
-        self.prepare_images()   
+        self.processed_path_strings = os.listdir(processed_path)
+        self.processed_paths = list(map(lambda x: Path(processed_path) / Path(x), self.processed_path_strings))
         
-    def prepare_counting(self):
+        self.img_path_strings = os.listdir(image_path)
+        self.img_paths = list(map(lambda x: Path(image_path) / Path(x), self.img_path_strings))
+        
+        self.csv_path_strings = os.listdir(csv_path)
+        self.csv_paths = list(map(lambda x: Path(csv_path) / Path(x), self.csv_path_strings))
+
+        self.csv_directory = csv_path
+        self.image_directory = image_path
+        self.processed_directory = processed_path
+        self.output_path = region_path
+        self.dataset_path = dataset_path
+        
+        self.img_shape = (*img_size, 3)
+        
+        self.output_signature = (
+            tf.TensorSpec(shape=(341, 256, 3), dtype=tf.float32),
+            tf.TensorSpec(shape=(), dtype=tf.float32)
+        )
+    
+    # Processes everything in the preprocessed-images folder and moves them to the processed-images folder
+    def prepare_images(self):
+        try:
+            df = pd.read_csv(self.output_path, index_col=0)
+        except FileNotFoundError:
+            df = pd.DataFrame(data=[], columns=['file-name', 'region-count'])
+            df.index.name = 'file-id'
+        
+        for img_path in self.img_paths:
+            try:
+                df = self.append_dataframe(img_path, df)
+            except FileNotFoundError:
+                continue
+            
+            self.prepare_dataset_entry(img_path, df)
+            self.prepare_single_image(img_path)
+    
+    def append_dataframe(self, img_path, dataframe, count=None):
+        if not count:
+            csv_path = Path(self.csv_directory) / Path(img_path.stem + 'csv')
+            try:
+                with open(csv_path, 'r') as csv_file:
+                    header = csv_file.readline()
+                    line1 = csv_file.readline()
+                    line_list = line1.split(',')
+                    
+                    count = int(line_list[3])
+                
+            except FileNotFoundError:
+                print(f'Could not find {csv_path}, ')
+                raise FileNotFoundError
+        
+        df_row = pd.DataFrame([[img_path.name, count]], index=[img_path.stem], columns=['file-name', 'region-count'])
+        df = pd.concat(dataframe, df_row, ignore_index=True)
+        return df
+        
+        
+    def prepare_dataset_entry(self, img_path, data):
+        x = cv2.imread(str(img_path.resolve()))
+        y = np.array(data['region-count'].loc[img_path.stem], dtype=np.float32)
+        
+        x = x.astype(np.float32)
+        
+        assert x is not None
+        assert y is not None
+        
+        x_path = Path(DATASET_PATH) / Path(img_path.stem + 'x.npy')
+        y_path = Path(DATASET_PATH) / Path(img_path.stem + 'y.npy')
+        
+        np.save(str(x_path), x)
+        np.save(str(y_path), y)
+        
+    def prepare_single_image(self, img_path):
+        image_dir = Path(self.processed_directory)
+        img = Image.open(img_path)
+        
+        if img_path.suffix != 'jpg':
+            img = img.convert('RGB')
+            new_file_path = image_dir / Path(img_path.stem + '.jpg')
+        
+        else:
+            new_file_path = image_dir / Path(img_path.name)
+                        
+        img_new = Image.new(img.mode, img.size)
+        img_new.putdata(img.getdata())
+        
+        img_new = img_new.resize((256, 341))
+        img_new.save(str(new_file_path))
+        
+        if img_path.suffix != '.jpg':
+            os.remove(img_path)
+
+    # This assumes that the images have been processed by prepare_images
+    def prepare_counting_processed(self):
         csv_count_dict = {}
         for csv_file in self.csv_paths:
             with csv_file.open() as file:
@@ -39,7 +141,7 @@ class Cleaning:
                 csv_count_dict[csv_file.stem] = line_list[3]
         
         img_name_dict = {}
-        for img_file in self.img_paths:
+        for img_file in self.processed_paths:
             if img_file.stem in csv_count_dict:
                 img_name_dict[img_file.stem] = img_file.name
         
@@ -51,34 +153,52 @@ class Cleaning:
         
         df = pd.concat([df, img_name_df], axis=1)
         df['region-count'] = df['region-count'].astype(int)
-        
-        self.df = df
+        df.to_csv(self.output_path)
     
-    def gen_image(self):
-        for img_path in self.img_paths:
-            x = cv2.imread(str(img_path.resolve()))
-            y = self.df['region-count'].loc[img_path.stem]
+    # This assumes that a dataset exists following prepare_counting and that the images have already been processed
+    def prepare_dataset_processed(self):
+        df = pd.read_csv(self.output_path, index_col=0)
+    
+        for img_path in self.processed_paths:
+            x = cv2.imread(str(img_path.resolve()))      
             
-            yield x, y
-    
-    def prepare_images(self):
-        dataset = tf.data.Dataset.from_generator(self.gen_image, 
-                                                 output_signature=(
-                                                     tf.TensorSpec(shape=(4032, 3024, 3), dtype=tf.float32),
-                                                     tf.TensorSpec(shape=(), dtype=tf.float32)
-                                                )
-                                            )                          
-        self._dataset = dataset
+            y = np.array(df['region-count'].loc[img_path.stem], dtype=np.float32)
+            x = x.astype(np.float32)                     
 
-    @property
-    def dataset(self):
-        return self._dataset
-    
-    @property
-    def dataframe(self):
-        return self.df
+            assert x is not None
+            assert y is not None
+            
+            x_path = Path(DATASET_PATH) / Path(img_path.stem + 'x.npy')
+            y_path = Path(DATASET_PATH) / Path(img_path.stem + 'y.npy')
+            
+            np.save(str(x_path), x)
+            np.save(str(y_path), y)
 
+    # This assumes that a dataset has been prepared with prepare_dataset_processed or with prepare_images
+    def dataset_generator(self):
+        shuffled_img_paths = sample(self.processed_paths, len(self.processed_paths))
+        for img_path in shuffled_img_paths:
+            
+            x_path = Path(DATASET_PATH) / Path(img_path.stem + 'x.npy')
+            y_path = Path(DATASET_PATH) / Path(img_path.stem + 'y.npy')
+            
+            x = np.load(x_path)
+            y = np.load(y_path)
+            
+            x = tf.convert_to_tensor(x, dtype=tf.float32)
+            y = tf.convert_to_tensor(y, dtype=tf.float32)
+            
+            x = tf.map_fn(lambda x: x/255.0, x)
+            
+            yield x, y    
+
+    
 if __name__ == '__main__':
     obj = Cleaning()
-    dataset = obj.dataset
-    print(next(iter(dataset.take(1))))
+    obj.prepare_images() 
+    dataset_test = tf.data.Dataset.from_generator(obj.dataset_generator, output_signature=obj.output_signature)
+          
+obj = Cleaning()
+frog_dataset = tf.data.Dataset.from_generator(obj.dataset_generator, output_signature=obj.output_signature)
+
+    

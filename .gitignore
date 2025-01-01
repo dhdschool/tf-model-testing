@@ -1,3 +1,14 @@
-annotated-images/
+annotated-images/csv-files/*
+!annotated-images/csv-files/.gitkeep
+
+annotated-images/image-data/*
+!annotated-images/image-data/.gitkeep
+
+annotated=images/preprocessed-images/*
+!annotated-images/preprocessed-images/.gitkeep
+
+annotated-images/processed-images/*
+!annotated-images/processed-images/.gitkeep
+
+annotated-images/region-count.csv
 src/__pycache__
-test-images/
