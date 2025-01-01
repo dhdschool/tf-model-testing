@@ -11,6 +11,10 @@ annotated-images/processed-images/*
 !annotated-images/processed-images/.gitkeep
 
 annotated-images/region-count.csv
+
 src/__pycache__
-test/
+
+test/*
+!test/.gitkeep
+
 backup/
