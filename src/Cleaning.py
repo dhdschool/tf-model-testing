@@ -21,27 +21,35 @@ if gpus:
   except RuntimeError as e:
     print(e)
 
+IMG_SIZE = (384, 512)
+IMG_SHAPE = (512, 384, 3)
+
 DATASET_PATH = 'annotated-images/image-data'
 IMAGE_PATH = 'annotated-images/preprocessed-images'
 PROCESSED_PATH = 'annotated-images/processed-images'
 CSV_PATH = 'annotated-images/csv-files'
+REGION_COUNT_PATH = 'annotated-images/region-count.csv'
 
 class Cleaning:
     def __init__(self, 
                  image_path=IMAGE_PATH, 
                  csv_path=CSV_PATH, 
-                 region_path = 'annotated-images/region-count.csv',
+                 region_path = REGION_COUNT_PATH,
                  dataset_path = DATASET_PATH,
                  processed_path = PROCESSED_PATH,
-                 img_size = (341, 256)):  
+                 img_size = IMG_SIZE,
+                 img_shape = IMG_SHAPE):  
         
         self.processed_path_strings = os.listdir(processed_path)
+        self.processed_path_strings.remove('.gitkeep')
         self.processed_paths = list(map(lambda x: Path(processed_path) / Path(x), self.processed_path_strings))
         
         self.img_path_strings = os.listdir(image_path)
+        self.img_path_strings.remove('.gitkeep')
         self.img_paths = list(map(lambda x: Path(image_path) / Path(x), self.img_path_strings))
         
         self.csv_path_strings = os.listdir(csv_path)
+        self.csv_path_strings.remove('.gitkeep')
         self.csv_paths = list(map(lambda x: Path(csv_path) / Path(x), self.csv_path_strings))
 
         self.csv_directory = csv_path
@@ -50,10 +58,11 @@ class Cleaning:
         self.output_path = region_path
         self.dataset_path = dataset_path
         
-        self.img_shape = (*img_size, 3)
+        self.img_shape = img_shape
+        self.img_size = img_size
         
         self.output_signature = (
-            tf.TensorSpec(shape=(341, 256, 3), dtype=tf.float32),
+            tf.TensorSpec(shape=self.img_shape, dtype=tf.float32),
             tf.TensorSpec(shape=(), dtype=tf.float32)
         )
     
@@ -62,7 +71,7 @@ class Cleaning:
         try:
             df = pd.read_csv(self.output_path, index_col=0)
         except FileNotFoundError:
-            df = pd.DataFrame(data=[], columns=['file-name', 'region-count'])
+            df = pd.DataFrame(data=[[]], columns=['region-count', 'file-name'])
             df.index.name = 'file-id'
         
         for img_path in self.img_paths:
@@ -71,12 +80,16 @@ class Cleaning:
             except FileNotFoundError:
                 continue
             
-            self.prepare_dataset_entry(img_path, df)
             self.prepare_single_image(img_path)
-    
+            self.prepare_dataset_entry(img_path, df)
+            
+            os.remove(img_path)
+            
+        df.to_csv(self.output_path)
+        
     def append_dataframe(self, img_path, dataframe, count=None):
         if not count:
-            csv_path = Path(self.csv_directory) / Path(img_path.stem + 'csv')
+            csv_path = Path(self.csv_directory) / Path(img_path.stem + '.csv')
             try:
                 with open(csv_path, 'r') as csv_file:
                     header = csv_file.readline()
@@ -88,10 +101,16 @@ class Cleaning:
             except FileNotFoundError:
                 print(f'Could not find {csv_path}, ')
                 raise FileNotFoundError
+            
+        if img_path.stem in dataframe.index:
+            dataframe.loc[img_path.stem] = [img_path.name, count]
+        else:
+            df_row = pd.DataFrame([[count, img_path.name]], index=[img_path.stem], columns=['region-count', 'file-name'])
+            df_row.index.name = 'file-id'
         
-        df_row = pd.DataFrame([[img_path.name, count]], index=[img_path.stem], columns=['file-name', 'region-count'])
-        df = pd.concat(dataframe, df_row, ignore_index=True)
-        return df
+            dataframe = pd.concat([dataframe, df_row])
+            
+        return dataframe
         
         
     def prepare_dataset_entry(self, img_path, data):
@@ -123,11 +142,8 @@ class Cleaning:
         img_new = Image.new(img.mode, img.size)
         img_new.putdata(img.getdata())
         
-        img_new = img_new.resize((256, 341))
+        img_new = img_new.resize(self.img_size)
         img_new.save(str(new_file_path))
-        
-        if img_path.suffix != '.jpg':
-            os.remove(img_path)
 
     # This assumes that the images have been processed by prepare_images
     def prepare_counting_processed(self):
@@ -158,7 +174,6 @@ class Cleaning:
     # This assumes that a dataset exists following prepare_counting and that the images have already been processed
     def prepare_dataset_processed(self):
         df = pd.read_csv(self.output_path, index_col=0)
-    
         for img_path in self.processed_paths:
             x = cv2.imread(str(img_path.resolve()))      
             
@@ -177,25 +192,39 @@ class Cleaning:
     # This assumes that a dataset has been prepared with prepare_dataset_processed or with prepare_images
     def dataset_generator(self):
         shuffled_img_paths = sample(self.processed_paths, len(self.processed_paths))
+        x_dct = {}
+        y_dct = {}
+            
         for img_path in shuffled_img_paths:
+            if len(x_dct) > 100:
+                x_dct = {}
+                y_dct = {}
             
-            x_path = Path(DATASET_PATH) / Path(img_path.stem + 'x.npy')
-            y_path = Path(DATASET_PATH) / Path(img_path.stem + 'y.npy')
+           
+            if img_path.stem not in x_dct:
+                x_path = Path(DATASET_PATH) / Path(img_path.stem + 'x.npy')
+                x = np.load(x_path)
+                x = tf.convert_to_tensor(x, dtype=tf.float32)
+                x = tf.map_fn(lambda x: x/255.0, x)
+                x_dct[img_path.stem] = x
+            else:
+                x = x_dct[img_path.stem]
+
+            if img_path.stem not in y_dct:
+                y_path = Path(DATASET_PATH) / Path(img_path.stem + 'y.npy')
+                y = np.load(y_path)
+                y = tf.convert_to_tensor(y, dtype=tf.float32)
+                y_dct[img_path.stem] = y
+            else:
+                y = y_dct[img_path.stem]
             
-            x = np.load(x_path)
-            y = np.load(y_path)
-            
-            x = tf.convert_to_tensor(x, dtype=tf.float32)
-            y = tf.convert_to_tensor(y, dtype=tf.float32)
-            
-            x = tf.map_fn(lambda x: x/255.0, x)
             
             yield x, y    
 
     
 if __name__ == '__main__':
     obj = Cleaning()
-    obj.prepare_images() 
+    obj.prepare_dataset_processed() 
     dataset_test = tf.data.Dataset.from_generator(obj.dataset_generator, output_signature=obj.output_signature)
           
 obj = Cleaning()
