@@ -1,5 +1,9 @@
 from Cleaning import IMG_SIZE, REGION_COUNT_PATH
 from PIL import Image, ImageDraw
+from pathlib import Path
+import math
+
+import os
 
 import numpy as np
 import pandas as pd
@@ -8,6 +12,92 @@ from scipy.interpolate import CubicSpline
 from scipy.ndimage import histogram
 
 TEST_IMAGE_PATH = 'test/test-img.jpg'
+TEXTURE_DIRECTORY = 'texture'
+PETRI_DIRECTORY = 'petri-dish'
+FROG_EGG_DIRECTORY = 'frog-egg'
+FERT_DIRECTORY = 'fert'
+UNFERT_DIRECTORY = 'unfert'
+TEXTURE_SIZE = (32, 32)
+
+class TextureManager:
+    def __init__(self):
+        self._head = Path(TEXTURE_DIRECTORY)
+        self._petri_path = self._head / Path(PETRI_DIRECTORY)
+        self._frog_path = self._head / Path(FROG_EGG_DIRECTORY)
+        self._fert_path = self._frog_path / Path(FERT_DIRECTORY)
+        self._unfert_path = self._frog_path / Path(UNFERT_DIRECTORY)
+        
+        self._texture_dict = {}
+        
+        
+        self._dir_to_str = {
+            self._petri_path:   'petri-dish',
+            self._fert_path:    'fert',
+            self._unfert_path:  'unfert'
+        }
+        
+        self._str_to_dir = {k:v for k, v in zip(self._directories.values(), self._directories.keys())}
+        
+        self._sizes = {
+            'petri-dish':   TEXTURE_SIZE,
+            'fert':         TEXTURE_SIZE,
+            'unfert':       TEXTURE_SIZE
+        }
+        
+        for directory in self._directories:
+            texture_path_strings = os.listdir(str(directory))
+            texture_paths = list(map(lambda x: directory / Path(x), texture_path_strings))
+            
+            self._texture_dict[directory] = texture_paths
+    
+    # Keys are pathlib Path objects
+    def __getitem__(self, key, local_path):
+        if isinstance(key, Path):
+            file_path = key / local_path
+            texture_str = self._dir_to_str[file_path]
+            
+        elif isinstance(key, str):
+            texture_str = key
+            file_path = self._str_to_dir[texture_str]
+        
+        else:
+            raise TypeError(f'Expected pathlib.Path or str, got {key.__class__}')
+        
+        with Image.open(file_path) as img:
+            self._sizes[texture_str] = img.size
+            return (img, texture_str, file_path, self._sizes[texture_str])
+
+   
+class Texture:
+    texture_obj = TextureManager()
+    
+    def __init__(self, key, img_path):
+        if not isinstance(img_path, Path):
+            img_path = Path(img_path)
+        
+        img, texture_string, file_path, img_size = Texture.texture_obj[key, img_path]
+        
+        self._texture_img = img
+        self._texture_string = texture_string
+        self._path = file_path
+        self._size = img_size
+
+    @property 
+    def img(self):
+        return self._texture_img
+    
+    @property
+    def texture_string(self):
+        return self._texture_string
+    
+    @property
+    def path(self):
+        return self._path
+    
+    @property
+    def size(self):
+        return self._size
+    
 
 def generate_image(file_path=TEST_IMAGE_PATH):
     img = Image.new(mode='RGB', size=IMG_SIZE)
@@ -23,6 +113,35 @@ def generate_image(file_path=TEST_IMAGE_PATH):
     petri_dish(canvas, IMG_SIZE)
     
     img.save(file_path)
+
+# Takes in an ImageDraw object 
+def texture_shape(draw_func, *, xy, texture : Texture, box_size, func_kwargs={}):
+  
+    canvas = draw_func.__self__
+    
+    draw_func_name = draw_func.__name__
+    draw_func = getattr(canvas.__class__, draw_func_name)
+    
+    
+    background_img = Image.new('RGB', size=box_size)
+    bitmask_img = Image.new('1', size=box_size)
+    
+    bitmask_canvas = ImageDraw.Draw(bitmask_img)
+    
+    grid_width = math.ceil(box_size[0] / texture.size[0])
+    grid_height = math.ceil(box_size[1] / texture.size[1])
+    
+    for row in range(grid_height):
+        for column in range(grid_width):
+            upper_left = (row*texture.size[0], column*texture.size[1])
+            lower_right = ((row+1)*texture.size[0], (column+1)*texture.size[1])
+            
+            background_img.paste(texture.img, box=(upper_left, lower_right))
+    
+    draw_func(bitmask_canvas, fill=1, outline=1 **func_kwargs)
+    canvas.im.paste(background_img, box=xy, mask=bitmask_img)
+    
+    
 
 def brown_to_grey_grad(canvas, center, max_r):
     max_r *= 1
