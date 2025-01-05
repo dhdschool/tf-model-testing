@@ -212,12 +212,6 @@ def brown_to_grey_grad(canvas, center, scaling_factor=1):
         b = int((b_end) * (1 - circle) + b_start * (circle))
         canvas.circle(center, radius=max_r * (1 - circle), fill=(r,g,b), outline=(r,g,b))
 
-def hex_coordinates(circle_radius, hex_radius):
-    max_hex_radii = circle_radius // hex_radius
-    max_r = (max_hex_radii - 1) // 2 + 1
-    
-    
-
 def petri_dish(canvas, texture_file, img_size):
     r = int(5 * img_size[0] / 11)
     
@@ -237,11 +231,21 @@ def petri_dish(canvas, texture_file, img_size):
         'radius': r
     }
     
+    petri_bitmask = Image.new('1', size=(2*r, 2*r))
+    ImageDraw.Draw(petri_bitmask).circle(fill=1,
+                                         xy=(r, r),
+                                         radius=r)
+    
     texture_shape(canvas.circle, 
                   func_kwargs=petri_circle_args,
                   xy=petri_dish_bb,
                   texture=petri_dish_texture,
                   border_adjuster=5)
+    
+    
+def fill_frog(circle_radius):
+    valid_seperation = np.arange(1,5)
+    
 
     
     
