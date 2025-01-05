@@ -130,7 +130,7 @@ class Cleaning:
         
     def prepare_single_image(self, img_path):
         image_dir = Path(self.processed_directory)
-        with Image.open(img_path) as img:
+        with Image.open(str(img_path)) as img:
             if img_path.suffix != 'jpg':
                 img = img.convert('RGB')
                 new_file_path = image_dir / Path(img_path.stem + '.jpg')
@@ -141,7 +141,8 @@ class Cleaning:
             img_new = Image.new(img.mode, img.size)
             img_new.putdata(img.getdata())
             
-            img_new = img_new.resize(self.img_size)
+            if img_new.size != self.img_size:
+                img_new = img_new.resize(self.img_size)
             img_new.save(str(new_file_path))
 
     # This assumes that the images have been processed by prepare_images
